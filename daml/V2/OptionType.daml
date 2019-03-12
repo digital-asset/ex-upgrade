@@ -1,0 +1,28 @@
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+daml 1.2
+module V2.OptionType where
+
+template OptionType
+  with
+    operator      : Party
+    participant   : Party
+    optionId      : Text
+    description   : Text
+    symbol        : Text
+    exerciseLimit : Decimal
+  where
+    signatory operator
+    signatory participant
+
+    agreement description
+
+    controller participant can
+      ChangeExerciseLimit
+        : ContractId OptionType
+        with
+          newExerciseLimit : Decimal
+        do
+          create this with
+            exerciseLimit = newExerciseLimit

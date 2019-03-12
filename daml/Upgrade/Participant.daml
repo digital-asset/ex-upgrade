@@ -1,0 +1,107 @@
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+daml 1.2
+module Upgrade.Participant where
+
+import V1.OptionType as V1OT
+import V2.OptionType as V2OT
+
+import Upgrade.Rollbacks
+import Upgrade.Upgrades
+
+
+template ParticipantUpgrade
+  with
+    operator    : Party
+    participant : Party
+  where
+    signatory operator
+    signatory participant
+
+    let
+      v1Tov2OptType : (ContractId UpgradeOptionType) -> (ContractId V1OT.OptionType) ->
+                        Update (ContractId V2OT.OptionType)
+      v1Tov2OptType upgradeCid v1OptTypeCid =
+        do
+          exercise upgradeCid UOT_Upgrade
+            with
+              v1OptTypeCid
+
+      v2Tov1OptType : (ContractId RollbackOptionType) -> (ContractId V2OT.OptionType) ->
+                        Update (Either (ContractId OptionTypeRollbackConflict)
+                                      (ContractId V1OT.OptionType))
+      v2Tov1OptType rollbackCid v2OptTypeCid =
+        do
+          exercise rollbackCid ROT_Rollback
+            with
+              v2OptTypeCid
+
+    controller operator can
+      nonconsuming ExecuteOptionTypeUpgrade
+        : [ContractId V2OT.OptionType]
+        with
+          v1OptTypeCids : [ContractId V1OT.OptionType]
+        do
+          forA v1OptTypeCids
+               (\   (optTypeCid : ContractId V1OT.OptionType) ->
+                  do
+                    optType <- fetch optTypeCid
+                    assert (operator    == optType.operator)
+                    assert (participant == optType.participant))
+
+          upgradeOptTypeCid <- create UpgradeOptionType
+            with
+              operator
+              participant
+
+          v2OptTypeCids <- forA v1OptTypeCids
+                                (v1Tov2OptType upgradeOptTypeCid)
+
+          do
+            archive upgradeOptTypeCid
+
+          return v2OptTypeCids
+
+      nonconsuming ExecuteOptionTypeRollback
+        : [Either
+            (ContractId OptionTypeRollbackConflict)
+            (ContractId V1OT.OptionType)]
+        with
+          v2OptTypeCids : [ContractId V2OT.OptionType]
+        do
+          forA v2OptTypeCids
+               (\   (optTypeCid : ContractId V2OT.OptionType) ->
+                  do
+                    optType <- fetch optTypeCid
+                    assert (operator    == optType.operator)
+                    assert (participant == optType.participant))
+
+          rollbackOptTypeCid <- create RollbackOptionType
+            with
+              operator
+              participant
+
+          eithV1OptTypeCids <- forA v2OptTypeCids
+                                    (v2Tov1OptType rollbackOptTypeCid)
+
+          do
+            archive rollbackOptTypeCid
+
+          return eithV1OptTypeCids
+
+
+template ParticipantUpgradeRequest
+  with
+    operator    : Party
+    participant : Party
+  where
+    signatory operator
+
+    controller participant can
+      Accept
+        : ContractId ParticipantUpgrade
+        do
+          create ParticipantUpgrade with
+            operator
+            participant

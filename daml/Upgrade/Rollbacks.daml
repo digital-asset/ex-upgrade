@@ -1,0 +1,176 @@
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+daml 1.2
+module Upgrade.Rollbacks where
+
+import V1.Operator   as V1O
+import V1.OptionType as V1OT
+import V1.Symbol     as V1S
+
+import V2.Operator   as V2O
+import V2.OptionType as V2OT
+import V2.Symbol     as V2S
+
+import DA.Text as T
+
+template RollbackOperator
+  with
+    operator : Party
+  where
+    signatory operator
+
+    controller operator can
+      RO_Rollback
+        : ContractId V1O.Operator
+        with
+          v2OperatorCid : ContractId V2O.Operator
+        do
+          v2 <- fetch v2OperatorCid
+          assert (operator == v2.operator)
+          do
+            archive v2OperatorCid
+          create V1O.Operator
+            with
+              operator
+
+
+template RollbackSymbol
+  with
+    operator : Party
+  where
+    signatory operator
+    agreement "Rollback symbols. Any symbol that does not " <>
+              "have exactly 3 characters will be archived."
+
+    controller operator can
+      nonconsuming RS_Rollback
+        : Either (ContractId SymbolRollbackConflict)
+                         (ContractId V1S.EquitySymbol)
+        with
+          v2SymCid : ContractId V2S.EquitySymbol
+        do
+          v2 <- fetch v2SymCid
+          assert (operator == v2.operator)
+          do
+            archive v2SymCid
+          let symbolLength = T.length v2.symbol
+
+          if symbolLength == 3
+          then do
+            v1Cid <- create V1S.EquitySymbol
+              with
+                operator
+                symbol = v2.symbol
+                description = v2.description
+                observers = v2.observers
+            return (Right v1Cid)
+          else do
+            conflictCid <- create SymbolRollbackConflict
+              with
+                operator
+                badSymbol = v2.symbol
+                description = v2.description
+                observers = v2.observers
+            return (Left conflictCid)
+
+
+template RollbackOptionType
+  with
+    operator    : Party
+    participant : Party
+  where
+    signatory operator
+    signatory participant
+
+    controller operator can
+      nonconsuming ROT_Rollback
+        : Either (ContractId OptionTypeRollbackConflict)
+                         (ContractId V1OT.OptionType)
+        with
+          v2OptTypeCid : ContractId V2OT.OptionType
+        do
+          v2OptType <- fetch v2OptTypeCid
+          assert (operator    == v2OptType.operator)
+          assert (participant == v2OptType.participant)
+          do
+            archive v2OptTypeCid
+          let symbolLength = T.length v2OptType.symbol
+
+          if symbolLength == 3
+          then do
+            v1Cid <- create V1OT.OptionType
+              with
+                operator
+                participant
+                optionId = v2OptType.optionId
+                symbol = v2OptType.symbol
+                description = v2OptType.description
+            return (Right v1Cid)
+          else do
+            conflictCid <- create OptionTypeRollbackConflict
+              with
+                operator
+                participant
+                optionId = v2OptType.optionId
+                badSymbol = v2OptType.symbol
+                description = v2OptType.description
+            return (Left conflictCid)
+
+
+template SymbolRollbackConflict
+  with
+    operator    : Party
+    badSymbol   : Text
+    description : Text
+    observers   : [Party]
+  where
+    signatory operator
+
+    agreement "Symbol " <> badSymbol <> " is not 3 " <>
+              "characters long. Please resolve conflict"
+
+    controller operator can
+      SRC_ResolveConflict
+        : ContractId V1S.EquitySymbol
+        with
+          symbol : Text
+        do
+          assert (T.length symbol == 3)
+          create V1S.EquitySymbol
+            with
+              operator
+              symbol
+              description
+              observers
+
+
+template OptionTypeRollbackConflict
+  with
+    operator    : Party
+    participant : Party
+    optionId    : Text
+    badSymbol   : Text
+    description : Text
+  where
+    signatory operator
+    signatory participant
+
+    agreement "Symbol " <> badSymbol <> " is not 3 " <>
+              "characters long. Please resolve conflict"
+
+    controller operator can
+      ORC_ResolveConflict
+        : ContractId V1OT.OptionType
+        with
+          symbol : Text
+        do
+          assert (T.length symbol == 3)
+          create V1OT.OptionType
+            with
+              operator
+              participant
+              optionId
+              symbol
+              description
+

@@ -1,0 +1,160 @@
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+daml 1.2
+module Upgrade.Master where
+
+import V1.Operator as V1O
+import V1.Symbol   as V1S
+
+import V2.Operator as V2O
+import V2.Symbol   as V2S
+
+import Upgrade.Notification
+import Upgrade.Participant
+import Upgrade.Rollbacks
+import Upgrade.Upgrades
+
+template MasterUpgrade
+  with
+    operator : Party
+  where
+    signatory operator
+
+    let
+      v1Tov2Sym : (ContractId UpgradeSymbol) -> (ContractId V1S.EquitySymbol) ->
+                  Update (ContractId V2S.EquitySymbol)
+      v1Tov2Sym upgradeCid v1SymCid =
+        do
+          exercise upgradeCid US_Upgrade
+            with
+              v1SymCid
+
+      v2Tov1Sym : (ContractId RollbackSymbol) -> (ContractId V2S.EquitySymbol) ->
+                    Update (Either (ContractId SymbolRollbackConflict)
+                                  (ContractId V1S.EquitySymbol))
+      v2Tov1Sym rollbackCid v2SymCid =
+        do
+          exercise rollbackCid RS_Rollback
+            with
+              v2SymCid
+
+    controller operator can
+      nonconsuming RequestParticipantUpgrade
+        : ContractId ParticipantUpgradeRequest
+        with
+          participant : Party
+        do
+          create ParticipantUpgradeRequest with
+            operator
+            participant
+
+      nonconsuming InitiateUpgrade
+        : ContractId Notification
+        do
+          timeNow <- getTime
+          create Notification
+            with
+              operator
+              observers = []
+              timeNow
+              message   = "Upgrade Started"
+
+      nonconsuming InitiateRollback
+        : ContractId Notification
+        do
+          timeNow <- getTime
+          create Notification
+            with
+              operator
+              observers = []
+              timeNow
+              message   = "Rollback Started"
+
+      nonconsuming CompleteUpgradeRollback
+        : ContractId Notification
+        with
+          observers : [Party]
+          message   : Text
+        do
+          timeNow <- getTime
+          create Notification
+            with
+              operator
+              observers
+              timeNow
+              message
+
+      nonconsuming ExecuteOperatorUpgrade
+        : ContractId V2O.Operator
+        with
+          v1OperatorCid : ContractId V1O.Operator
+        do
+          v1Operator <- fetch v1OperatorCid
+          assert (operator == v1Operator.operator)
+          upgradeOperatorCid <- create UpgradeOperator
+            with
+              operator
+          do
+            exercise upgradeOperatorCid UO_Upgrade
+              with
+                v1OperatorCid
+
+      nonconsuming ExecuteSymbolUpgrade
+        : [ContractId V2S.EquitySymbol]
+        with
+          v1SymCids : [ContractId V1S.EquitySymbol]
+        do
+          forA v1SymCids
+               (\   (symbolCid : ContractId V1S.EquitySymbol) ->
+                  do
+                    symbol <- fetch symbolCid
+                    assert (operator == symbol.operator))
+
+          upgradeSymCid <- create UpgradeSymbol
+            with
+              operator
+          v2SymCids <- forA v1SymCids
+                            (v1Tov2Sym upgradeSymCid)
+
+          do
+            archive upgradeSymCid
+          return v2SymCids
+
+      nonconsuming ExecuteOperatorRollback
+        : ContractId V1O.Operator
+        with
+          v2OperatorCid : ContractId V2O.Operator
+        do
+          v2Operator <- fetch v2OperatorCid
+          assert (operator == v2Operator.operator)
+          rollbackOperatorCid <- create RollbackOperator
+            with
+              operator
+          do
+            exercise rollbackOperatorCid RO_Rollback
+              with
+                v2OperatorCid
+
+      nonconsuming ExecuteSymbolRollback
+        : [Either
+            (ContractId SymbolRollbackConflict)
+            (ContractId V1S.EquitySymbol)]
+        with
+          v2SymCids :  [ContractId V2S.EquitySymbol]
+        do
+          forA v2SymCids
+               (\   (symbolCid : ContractId V2S.EquitySymbol) ->
+                  do
+                    symbol <- fetch symbolCid
+                    assert (operator == symbol.operator))
+
+          rollbackRootSymCid <- create RollbackSymbol
+            with
+              operator
+          eithV1SymCids <- forA v2SymCids
+                                (v2Tov1Sym rollbackRootSymCid)
+
+          do
+            archive rollbackRootSymCid
+          return eithV1SymCids

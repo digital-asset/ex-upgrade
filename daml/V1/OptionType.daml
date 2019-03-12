@@ -1,0 +1,18 @@
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+daml 1.2
+module V1.OptionType where
+
+template OptionType
+  with
+    operator    : Party
+    participant : Party
+    optionId    : Text
+    symbol      : Text
+    description : Text
+  where
+    signatory operator
+    signatory participant
+
+    agreement description

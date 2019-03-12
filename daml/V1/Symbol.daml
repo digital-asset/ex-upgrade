@@ -1,0 +1,22 @@
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+daml 1.2
+module V1.Symbol where
+
+import DA.Text as T
+
+template EquitySymbol
+  with
+    operator    : Party
+    symbol      : Text
+    description : Text
+    observers   : [Party]
+  where
+    signatory operator
+
+    observer observers
+
+    ensure T.length symbol == 3
+
+    agreement description

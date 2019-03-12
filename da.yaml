@@ -1,0 +1,12 @@
+# Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+project:
+  sdk-version: '0.11.14'
+  name: ex-upgrade
+  source: daml/UpgradeExample.daml
+  parties:
+  - Exchange
+  - ClearingParticipant1
+  - ClearingParticipant2
+version: 2

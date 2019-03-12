@@ -1,0 +1,89 @@
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+daml 1.2
+module Upgrade.Upgrades where
+
+import V1.Operator   as V1O
+import V1.OptionType as V1OT
+import V1.Symbol     as V1S
+
+import V2.Operator   as V2O
+import V2.OptionType as V2OT
+import V2.Symbol     as V2S
+
+
+template UpgradeOperator
+  with
+    operator : Party
+  where
+    signatory operator
+
+    controller operator can
+      UO_Upgrade
+        : ContractId V2O.Operator
+        with
+          v1OperatorCid : ContractId V1O.Operator
+        do
+          v1 <- fetch v1OperatorCid
+          assert (operator == v1.operator)
+          do
+            archive v1OperatorCid
+          create V2O.Operator
+            with
+              operator
+
+
+template UpgradeSymbol
+  with
+    operator : Party
+  where
+    signatory operator
+
+    controller operator can
+      nonconsuming US_Upgrade
+        : ContractId V2S.EquitySymbol
+        with
+          v1SymCid : ContractId V1S.EquitySymbol
+        do
+          v1 <- fetch v1SymCid
+          assert (operator == v1.operator)
+          do
+            archive v1SymCid
+          create V2S.EquitySymbol
+            with
+              operator
+              symbol = v1.symbol
+              description = v1.description
+              observers = v1.observers
+
+
+template UpgradeOptionType
+  with
+    operator    : Party
+    participant : Party
+  where
+    signatory operator
+    signatory participant
+
+    controller operator can
+      nonconsuming UOT_Upgrade
+        : ContractId V2OT.OptionType
+        with
+          v1OptTypeCid : ContractId V1OT.OptionType
+        do
+          v1OptType <- fetch v1OptTypeCid
+          assert (operator    == v1OptType.operator)
+          assert (participant == v1OptType.participant)
+          do
+            archive v1OptTypeCid
+          let presetExerciseLimit = 0.015
+
+          create V2OT.OptionType
+            with
+              operator
+              participant
+              optionId = v1OptType.optionId
+              description = v1OptType.description
+              symbol = v1OptType.symbol
+              exerciseLimit = presetExerciseLimit

@@ -1,0 +1,62 @@
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+daml 1.2
+module V2.ClearingParticipant where
+
+import V2.OptionType
+
+import DemoData
+
+
+template ClearingParticipantInvitation
+  with
+    operator    : Party
+    participant : Party
+  where
+    signatory operator
+
+    let
+      generateOptionTypes :
+        (Update [(ContractId OptionType,ContractId OptionType)])
+        -> (Text, Text)
+        -> Update [(ContractId OptionType,ContractId OptionType)]
+      generateOptionTypes acc demoData =
+        do
+          prev <- acc
+
+          let
+            putId    = demoData._1 <> "P"
+            callId   = demoData._1 <> "C"
+            putDesc  = demoData._2 <> " " <> putCall._1
+            callDesc = demoData._2 <> " " <> putCall._2
+
+          putOptionCid <- create OptionType
+            with
+              operator
+              participant
+              optionId      = putId
+              description   = putDesc
+              symbol        = demoData._1
+              exerciseLimit = defaultExerciselimit
+          callOptionCid <- create OptionType
+            with
+              operator
+              participant
+              optionId      = callId
+              symbol        = demoData._1
+              description   = callDesc
+              exerciseLimit = defaultExerciselimit
+
+          return ((::) (putOptionCid, callOptionCid) prev)
+
+    controller participant can
+      Accept
+        : [(ContractId OptionType, ContractId OptionType)]
+        do
+          foldl generateOptionTypes (return [] ) demoData
+
+    controller operator can
+      Withdraw
+        : ()
+        do return ()

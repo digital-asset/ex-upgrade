@@ -1,0 +1,337 @@
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+daml 1.2
+module UpgradeExample where
+
+import V1.ClearingParticipant as V1CP
+import V1.Operator            as V1O
+import V1.Symbol              as V1S
+
+import V2.Operator            as V2O
+import V2.OptionType          as V2OT
+
+import Upgrade.Master
+import Upgrade.Participant as UP
+import Upgrade.Rollbacks
+
+import DA.Date
+import DA.Either
+import DA.List
+
+import DemoData
+
+
+operatorText = "Exchange"
+participant1Text = "ClearingParticipant1"
+participant2Text = "ClearingParticipant2"
+participantTexts = [participant1Text, participant2Text]
+
+startTime : Date
+startTime = date 2018 Jan 1
+
+registerSymbols :
+  ContractId V1O.Operator
+  -> Scenario [ContractId V1S.EquitySymbol]
+  -> (Text, Text)
+  -> Scenario [ContractId V1S.EquitySymbol]
+registerSymbols operatorCid acc demoData =
+  do
+    operator <- getParty operatorText
+    participants <- mapA getParty participantTexts
+    prev <- acc
+
+    symbolCid <- operator `submit` do
+      exercise operatorCid V1O.RegisterSymbol
+        with
+          symbol      = demoData._1
+          description = demoData._2
+          observers   = participants
+
+    return ((::) symbolCid prev)
+
+fetchContracts :
+  Scenario [V1S.EquitySymbol]
+  -> (ContractId V1S.EquitySymbol)
+  -> Scenario [V1S.EquitySymbol]
+fetchContracts acc symbolCid =
+  do
+    operator <- getParty operatorText
+    prev <- acc
+
+    symbol <- operator `submit` do
+      fetch symbolCid
+
+    return ((::) symbol prev)
+
+
+-- test
+example = do
+  operator <- getParty operatorText
+  participants <- mapA getParty participantTexts
+  let
+    participant1 = participants!!0
+    participant2 = participants!!1
+
+  passToDate startTime
+
+-- ================================ ONBOARDING ================================
+  -- Operator creates role contract and registers symbols
+  v1OperatorCid <- operator `submit` do
+    create V1O.Operator
+      with
+        operator
+
+  v1SymCids <- foldl (registerSymbols v1OperatorCid)
+                     (return [] )
+                     demoData
+
+  -- verify that the Operator cannot register a symbol that
+  -- is 4 characters long
+  operator `submitMustFail` do
+    exercise v1OperatorCid V1O.RegisterSymbol
+      with
+        symbol      = acmeSymbol
+        description = acmeDesc
+        observers   = participants
+
+  -- Operator onboards two clearing house Participants
+  cp1InvitationCid <- operator `submit` do
+    exercise v1OperatorCid V1O.OnboardClearingParticipant
+      with
+        participant = participant1
+
+  cp2InvitationCid <- operator `submit` do
+    exercise v1OperatorCid V1O.OnboardClearingParticipant
+      with
+        participant = participant2
+
+  cp1PutCallCids <- participant1 `submit` do
+    exercise cp1InvitationCid V1CP.Accept
+
+  cp2PutCallCids <- participant2 `submit` do
+    exercise cp2InvitationCid V1CP.Accept
+-- ============================================================================
+
+-- ================================= UPGRADE ==================================
+  -- Operator creates Master Upgrade contract and invites
+  -- Clearing Participants to accept an upgrade
+  masterCid <- operator `submit` do
+    create MasterUpgrade
+      with
+        operator
+
+  cp1RequestCid <- operator `submit` do
+    exercise masterCid RequestParticipantUpgrade
+      with
+        participant = participant1
+
+  cp2RequestCid <- operator `submit` do
+    exercise masterCid RequestParticipantUpgrade
+      with
+        participant = participant2
+
+  -- Participants accept upgrade request
+  cp1URCid <- participant1 `submit` do
+    exercise cp1RequestCid UP.Accept
+
+  cp2URCid <- participant2 `submit` do
+    exercise cp2RequestCid UP.Accept
+
+  -- Operator initiates upgrade creating a notification
+  operator `submit` do
+    exercise masterCid InitiateUpgrade
+
+  -- execute Operator role contract upgrade
+  v2OperatorCid <- operator `submit` do
+    exercise masterCid ExecuteOperatorUpgrade
+      with
+        v1OperatorCid
+
+  -- execute symbol upgrades
+  v2SymCids <- operator `submit` do
+    exercise masterCid ExecuteSymbolUpgrade
+      with
+        v1SymCids
+
+  assert (length v1SymCids == length v2SymCids)
+
+  -- execute option type upgrades for participants
+  let
+    tuplePutCalls = unzip cp1PutCallCids
+    v1OptTypeCids = tuplePutCalls._1 ++ tuplePutCalls._2
+
+  cp1v2OptTypeCids <- operator `submit` do
+    exercise cp1URCid ExecuteOptionTypeUpgrade
+      with
+        v1OptTypeCids
+
+  assert (length v1OptTypeCids == length cp1v2OptTypeCids)
+
+  let
+    tuplePutCalls = unzip cp2PutCallCids
+    v1OptTypeCids = tuplePutCalls._1 ++ tuplePutCalls._2
+
+  cp2v2OptTypeCids <- operator `submit` do
+    exercise cp2URCid ExecuteOptionTypeUpgrade
+      with
+        v1OptTypeCids
+
+  assert (length v1OptTypeCids == length cp2v2OptTypeCids)
+
+  -- operator completes upgrade creating a notification
+  operator `submit` do
+    exercise masterCid CompleteUpgradeRollback
+      with
+        observers = participants
+        message   = "Upgrade Complete"
+
+  -- operator can now register a ticker with 4 characters
+  v2AcmeSymCid <- operator `submit` do
+    exercise v2OperatorCid V2O.RegisterSymbol
+      with
+        symbol      = acmeSymbol
+        description = acmeDesc
+        observers   = participants
+
+  v2AcmeSym <- operator `submit` do fetch v2AcmeSymCid
+
+  -- participants now have an option exercise limit
+  -- threshold that they can control. Assert that with
+  -- the first of the list
+  let v2OptTypeCid = head cp1v2OptTypeCids
+
+  v2OptType <- participant1 `submit` do
+    fetch v2OptTypeCid
+
+  assert (v2OptType.exerciseLimit == defaultExerciselimit)
+
+  v2OptTypeCid <- participant1 `submit` do
+    exercise v2OptTypeCid ChangeExerciseLimit
+      with
+        newExerciseLimit = DemoData.newExerciseLimit
+
+  v2OptType <- participant1 `submit` do
+    fetch v2OptTypeCid
+
+  assert (v2OptType.exerciseLimit == DemoData.newExerciseLimit)
+-- ============================================================================
+
+-- ================================= ROLLBACK =================================
+  -- operator initiates rollback creating a notification
+  operator `submit` do
+    exercise masterCid InitiateRollback
+
+  -- execute operator role contract rollback
+  v1OperatorCid <- operator `submit` do
+    exercise masterCid ExecuteOperatorRollback
+      with
+        v2OperatorCid
+
+  -- execute symbol rollbacks
+  eithV1SymCids <- operator `submit` do
+    exercise masterCid ExecuteSymbolRollback
+      with
+        v2SymCids = (::) v2AcmeSymCid v2SymCids
+
+  -- extract the successfully rolled back symbols
+  let v1SymCids = rights eithV1SymCids
+
+  assert (length v1SymCids == length v2SymCids)
+
+  -- extract the rollback conflicts
+  let symConflictCids = lefts eithV1SymCids
+
+  -- execute Option Type rollbacks for participants
+  cp1v1OptTypeCids <- operator `submit` do
+    exercise cp1URCid ExecuteOptionTypeRollback
+      with
+        v2OptTypeCids = (::) v2OptTypeCid
+                             (tail cp1v2OptTypeCids)
+
+  assert (length cp1v1OptTypeCids == length cp1v2OptTypeCids)
+
+  cp2v1OptTypeCids <- operator `submit` do
+    exercise cp2URCid ExecuteOptionTypeRollback
+      with
+        v2OptTypeCids = cp2v2OptTypeCids
+
+  assert (length cp2v1OptTypeCids == length cp2v2OptTypeCids)
+
+  -- resolve the conflict encountered while rolling back ACME
+  -- by using a 3 character long symbol name
+  assert (length symConflictCids == 1)
+  let acmeConflictCid = head symConflictCids
+
+  acmeConflict <- operator `submit` do fetch acmeConflictCid
+  assert (acmeConflict.badSymbol == acmeSymbol)
+
+  v1AcmeSymCid <- operator `submit` do
+    exercise acmeConflictCid SRC_ResolveConflict
+      with
+        symbol = acmSymbol
+
+  -- operator completes rollback creating a notification
+  operator `submit` do
+    exercise masterCid CompleteUpgradeRollback
+      with
+        observers = participants
+        message   = "Rollback Complete"
+
+  -- verify that the rolled back symbol maintains the
+  -- original data
+  v1AcmeSym <- operator `submit` do fetch v1AcmeSymCid
+
+  assert (v1AcmeSym == V1S.EquitySymbol
+    with
+      operator = v2AcmeSym.operator
+      symbol = acmSymbol
+      description = v2AcmeSym.description
+      observers = v2AcmeSym.observers)
+
+  -- operator has rolled back and cannot register a symbol
+  -- with 4 characters
+  operator `submitMustFail` do
+    exercise v1OperatorCid V1O.RegisterSymbol
+      with
+        symbol      = strkSymbol
+        description = strkDesc
+        observers   = participants
+-- ============================================================================
+
+-- test
+onboard = do
+  passToDate startTime
+  operator <- getParty operatorText
+  participants <- mapA getParty participantTexts
+  let
+    participant1 = participants!!0
+    participant2 = participants!!1
+
+-- ================================ ONBOARDING ================================
+  -- Operator creates role contract and registers symbols
+  v1OperatorCid <- operator `submit` do
+    create V1O.Operator
+      with
+        operator
+
+  v1SymCids <- foldl (registerSymbols v1OperatorCid)
+                     (return [] )
+                     demoData
+
+  -- Operator onboards two clearing house Participants
+  cp1InvitationCid <- operator `submit` do
+    exercise v1OperatorCid V1O.OnboardClearingParticipant
+      with
+        participant = participant1
+
+  cp2InvitationCid <- operator `submit` do
+    exercise v1OperatorCid V1O.OnboardClearingParticipant
+      with
+        participant = participant2
+
+  participant1 `submit` do
+    exercise cp1InvitationCid V1CP.Accept
+
+  participant2 `submit` do
+    exercise cp2InvitationCid V1CP.Accept

@@ -1,0 +1,37 @@
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+daml 1.2
+module V1.Operator where
+
+import V1.ClearingParticipant
+import V1.Symbol
+
+template Operator
+  with
+    operator : Party
+  where
+    signatory operator
+
+    controller operator can
+      nonconsuming RegisterSymbol
+        : ContractId EquitySymbol
+        with
+          symbol      : Text
+          description : Text
+          observers   : [Party]
+        do
+          create EquitySymbol with
+            operator
+            symbol
+            description
+            observers
+
+      nonconsuming OnboardClearingParticipant
+        : ContractId ClearingParticipantInvitation
+        with
+          participant : Party
+        do
+          create ClearingParticipantInvitation with
+            operator
+            participant

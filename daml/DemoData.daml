@@ -1,0 +1,26 @@
+-- Copyright (c) 2019, Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+daml 1.2
+module DemoData where
+
+demoData =  [ ("MDY", "Massive Dynamic, Inc.")
+            , ("GLB", "Globex Corporation")
+            , ("SOY", "Soylent Corp.")
+            , ("INI", "Initech")
+            , ("UMB", "Umbrella Corp.")
+            , ("HOO", "Hooli, Inc.")
+            , ("WKA", "Wonka Industries") ]
+
+putCall = ("Put Options", "Call Options")
+
+defaultExerciselimit = 0.015
+newExerciseLimit = 0.03
+
+acmeSymbol = "ACME"
+acmeDesc = "Acme Corp."
+
+acmSymbol = "ACM"
+
+strkSymbol = "STRK"
+strkDesc = "Stark Industries"
