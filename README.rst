@@ -1,4 +1,5 @@
-# Outdated
+Outdated
+~~~~~~~~
 
 This repo is outdated. It is kept online to avoid broken links, but it will no longer be updated. Please refer to the [current documentation](https://docs.daml.com) for instructions on how to upgrade DAML models post-1.0.
 
